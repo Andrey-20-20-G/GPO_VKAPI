@@ -13,9 +13,10 @@ using VkNet.Enums.Filters;
 using VkNet.Model;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using xNet;
 using VkNet.Model.RequestParams;
 using VkNet.Enums.SafetyEnums;
+using System.Threading;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.TreeView;
 
 namespace GPO
 {
@@ -57,22 +58,50 @@ namespace GPO
         /*Вывод в лист бокс участников группы*/
         public void getMembers()
         {
+            var offset = 0;
             var groupMembers = api.Groups.GetMembers(new GroupsGetMembersParams()
             {
                 GroupId = idGroupBox.Text,
+                Offset = offset,
                 Sort = GroupsSort.IdAsc,
             });
+            int count = groupMembers.Count();
             var user_ids = new List<long>();//список id пользователей
             foreach (var user in groupMembers)
             {
                 user_ids.Add(user.Id);//добавляем id список с id пользователей
-                //var _user = api.Users.Get(new long[] { user.Id }).FirstOrDefault();
-                //if (_user == null)
-                //    return;
-                //listBox1.Items.Add(_user.FirstName + " " + _user.LastName + " " + _user.Id);//вывод id в listbox
+                var _user = api.Users.Get(new long[] { user.Id }).FirstOrDefault();
+                if (_user == null)
+                    return;
+                listBox1.Items.Add(_user.FirstName + " " + _user.LastName + " " + _user.Id);//вывод id в listbox
             }
+            offset = 1000;
+            do
+            {
+                groupMembers = api.Groups.GetMembers(new GroupsGetMembersParams()
+                {
+                    GroupId = idGroupBox.Text,
+                    Offset = offset,
+                    Sort = GroupsSort.IdAsc,
+                });
+                foreach (var user in groupMembers)
+                {
+                    user_ids.Add(user.Id);
+                    var _user = api.Users.Get(new long[] { user.Id }).FirstOrDefault();
+                    if (_user == null)
+                    {
+                        return;
+                    }
+                    listBox1.Items.Add(_user.FirstName + " " + _user.LastName + " "+ user.Id);
+                }
+                count += groupMembers.Count;
+                offset += 1000;
+            } 
+            while (offset<25000 && count>= offset);
+
+
             var maxtrixOfCrossedFriends = new int [user_ids.Count,user_ids.Count];//матрица для графа
-            for (int i = 0; i < user_ids.Count; i++)
+            for (int i = 0; i < user_ids.Count - 1; i++)
             {
                 var polsovatel = api.Users.Get(new long[] {user_ids[i]}).FirstOrDefault();
                 if (polsovatel.IsClosed == true)
@@ -81,7 +110,7 @@ namespace GPO
                     {
                         maxtrixOfCrossedFriends[i, k] = 0;
                     }
-                    break;
+                    continue;
                 }
                 if (polsovatel.IsDeactivated == true)
                 {
@@ -89,15 +118,21 @@ namespace GPO
                     {
                         maxtrixOfCrossedFriends[i, k] = 0;
                     }
-                    break;
+                    continue;
                 }
+                Thread.Sleep(300);
                 var users_Friends = api.Friends.Get(new VkNet.Model.RequestParams.FriendsGetParams
                 {
                     UserId = user_ids[i],
                 });
-                for (int j = 0; j < users_Friends.Count; j++)
+                List<long> userFriends = new List<long>();
+                foreach (var user_F in users_Friends)
                 {
-                    if (user_ids.Contains(users_Friends[j].Id)==true)
+                    userFriends.Add(user_F.Id);
+                }
+                for (int j = 0; j < user_ids.Count - 1; j++)
+                {
+                    if (userFriends.Contains(user_ids[j])==true)
                     {
                         maxtrixOfCrossedFriends[i, j] = 1;
                     }
@@ -108,18 +143,44 @@ namespace GPO
                 }
             }
             string mt = "";
-            for (int i=0; i< user_ids.Count; i++)
+            for (int i=0; i< user_ids.Count -1 ; i++)
             {
-                for (int j = 0; j < user_ids.Count; j++)
+                for (int j = 0; j < user_ids.Count - 1; j++)
                 {
-                    if (maxtrixOfCrossedFriends[i, j]==1)
+                    mt += maxtrixOfCrossedFriends[i, j].ToString();
+                }
+                mt += "\n";
+            }
+            //MessageBox.Show(mt);
+            ///Создание файла с расширением graphML, после того как мы создали матрицу. 
+            ///Здесь мы берем список группы и создаем в файле узлы, а потом берем матрицу и создаем ребра графа,
+            ///где sourse(i-строка), а targer(j-столбец).
+            string path = @"D:\GPO\Graph_1.graphml";
+            string text = "<?xml version='1.0' encoding='utf-8'?>\n" +
+                "<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\"\nxmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n" +
+                "xsi:schemaLocation=\"http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd\"><graph edgedefault=\"undirected\">\n";
+            foreach (var item in user_ids)
+            {
+                text += $"<node id=\"{item}\"/>\n";
+            }
+            for (int i = 0; i < user_ids.Count - 1; i++)
+            {
+                for (int j = 0; j < user_ids.Count - 1; j++)
+                {
+                    if (maxtrixOfCrossedFriends[i,j] == 1)
                     {
-                        mt += maxtrixOfCrossedFriends[i, j].ToString();
+                        text += $"<edge source=\"{user_ids[i]}\" target=\"{user_ids[j]}\"/>\n";
                     }
                 }
             }
-            MessageBox.Show(mt);
+            text += "</graph>\n</graphml>";
+            using (StreamWriter streamWriter = new StreamWriter(path, false, System.Text.Encoding.Default))
+            {
+                streamWriter.WriteLine(text);
+            }
+            MessageBox.Show(text);
         }
+
         /*Получение количества участников группы, !!!на прямую не получается взять его!!!*/
         public int getCountOfGroup()
         {
